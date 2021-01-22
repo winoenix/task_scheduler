@@ -1,12 +1,21 @@
 import logging
-
-formatter = logging.Formatter(fmt='%(asctime)s - %(levelname)s - %(module)s - %(message)s')
-handler = logging.StreamHandler()
-handler.setFormatter(formatter)
+import sys
 
 logger = logging.getLogger('root')
+
+formatter = logging.Formatter(fmt='%(asctime)s - %(levelname)s - %(module)s - %(message)s')
+
+handler_log = logging.StreamHandler(sys.stdout)
+handler_log.setLevel(logging.INFO)
+handler_log.setFormatter(formatter)
+logger.addHandler(handler_log)
+
+handler_err = logging.StreamHandler(sys.stderr)
+handler_err.setLevel(logging.ERROR)
+handler_err.setFormatter(formatter)
+logger.addHandler(handler_err)
+
 logger.setLevel(logging.INFO)
-logger.addHandler(handler)
 
 LOOP_INVERVAL = 0.5
 
