@@ -181,12 +181,16 @@ def gen_sons(df, tids):
     return df
 
 
-def exec_task(cmd="sleep 1"):
+def exec_task(cmd="sleep 1", seconds=0):
     """
     执行任务对应的命令
     :param cmd:
+    :param seconds:
     :return:
     """
+    if seconds != 0:
+        logger.info("Wait %d seconds to run: %s. " % (seconds, cmd))
+        time.sleep(seconds)
     exec_ret = (os.system(cmd) >> 8)
     return exec_ret
 
@@ -253,7 +257,8 @@ def main_loop(t_date, mode):
             status = t_info.status.iloc[0]
             # print(tid, status, status == TASK_STATUS_ERROR, type(status))
             t_depend = td_df[td_df.tid == tid]
-            if (status == TASK_STATUS_WAITING) and (len(t_depend) == len(t_depend[t_depend.pre_tid == ""])):
+            if status in (TASK_STATUS_WAITING, TASK_STATUS_RETRY) \
+                    and (len(t_depend) == len(t_depend[t_depend.pre_tid == ""])):
                 # 任务满足运行条件: 在等待且依赖任务完成
                 group = t_info.group.iloc[0]
                 processes = grp_df[grp_df.group == group].processes.iloc[0]
@@ -261,10 +266,11 @@ def main_loop(t_date, mode):
                 if processes < processes_lmt:
                     # 判断是否满足并行数条件
                     cmd = make_cmd(tid, t_info.command.iloc[0], t_date, t_info.log_path.iloc[0])
+                    seconds = RETRY_INTERVAL if status == TASK_STATUS_RETRY else 0
                     logger.info("Task %s: starting, command: %s" % (tid, cmd))
                     pool_ls.append((
                         tid,
-                        pool.apply_async(func=exec_task, args=(cmd,))
+                        pool.apply_async(func=exec_task, args=(cmd, seconds))
                     ))
                     ti_df.loc[ti_df.tid == tid, "status"] = TASK_STATUS_RUNNING
                     ti_df.loc[ti_df.tid == tid, "start_time"] = pd.Timestamp(datetime.datetime.now())
@@ -284,7 +290,7 @@ def main_loop(t_date, mode):
                     exec_task(cmd)
                 # 重置错误标识
                 logger.info("Task %s: reset status to TASK_STATUS_WAITING. " % tid)
-                ti_df.loc[ti_df.tid == tid, "status"] = TASK_STATUS_WAITING
+                ti_df.loc[ti_df.tid == tid, "status"] = TASK_STATUS_RETRY
 
         # 遍历进程池中的任务，查询完成情况，将完成的任务踢出进程池
         i = 0
