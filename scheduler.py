@@ -79,6 +79,10 @@ def get_task_info_from_cfg():
     }, na_filter=False)
     grp_df.group = grp_df.group.str.strip()
     grp_df["processes"] = 0
+
+    tmp = ti_df[~ti_df.group.isin(grp_df.group)]
+    if len(tmp) > 0:
+        raise ValueError("Task group not in group information: \n%s" % str(tmp))
     return ti_df, td_df, grp_df
 
 
