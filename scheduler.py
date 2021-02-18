@@ -5,6 +5,7 @@ import sys
 import time
 import multiprocessing
 import datetime
+from db.database import init_tbs, exec_sql, db_engine
 
 pd.set_option('display.width', 100)
 pd.set_option('display.max_columns', 100)  # 打印最大列数
@@ -12,29 +13,27 @@ pd.set_option('display.max_rows', 100)  # 打印最大行数
 pd.set_option('display.min_rows', 60)  # 打印最小行数
 
 
-def get_task_info(mode=0, tids=None):
+def init_task_info(mode=0, tids=None):
     """
     :param mode: 0从配置文件开始执行，1从持久化信息恢复，2生成父任务表，3生成子任务表
     :param tids:
     :return:
     """
     if mode == 0:
-        return get_task_info_from_cfg()
+        init_from_cfg()
     elif mode == 1:
-        return get_task_info_from_db()
+        restore_from_db()
     elif mode == 2:
-        t_df = get_task_info_from_cfg()
-        t_df = gen_fathers(t_df, tids)
-        return t_df
+        init_from_cfg()
+        gen_fathers()
     elif mode == 3:
-        t_df = get_task_info_from_cfg()
-        t_df = gen_sons(t_df, tids)
-        return t_df
+        init_from_cfg()
+        gen_sons()
     else:
         raise ValueError("Invalid mode: %s. " % mode)
 
 
-def get_task_info_from_cfg():
+def init_from_cfg():
     """
     获取、解析调度配置文件，返回调度信息表
     :return:
@@ -83,16 +82,24 @@ def get_task_info_from_cfg():
     tmp = ti_df[~ti_df.group.isin(grp_df.group)]
     if len(tmp) > 0:
         raise ValueError("Task group not in group information: \n%s" % str(tmp))
-    return ti_df, td_df, grp_df
+
+    init_tbs()
+    ti_df.to_sql("task_info", db_engine, if_exists="append", index=False)
+    td_df.to_sql("task_dependence", db_engine, if_exists="append", index=False)
+    grp_df.to_sql("group_info", db_engine, if_exists="append", index=False)
+    # print(pd.read_sql("task_info", db_engine))
+    # print(pd.read_sql("task_dependence", db_engine))
+    # print(pd.read_sql("group_info", db_engine))
+    return
 
 
-def check_dag(td_df):
+def check_dag():
     """
     检查调度依赖关系，并生成执行的调度表
-    :param td_df:
     :return:
     """
     # 判断依赖任务是否在任务表中或者为空字符串
+    td_df = pd.read_sql("task_dependence", db_engine)
     tids = td_df.tid.drop_duplicates().to_list() + [""]
     if len(td_df[~td_df.pre_tid.isin(tids)]) > 0:
         logger.error("Unknown dependencies. ")
@@ -112,77 +119,32 @@ def check_dag(td_df):
     return True
 
 
-def update_db(ti_df, td_df, grp_df):
-    """
-    对任务状态做持久化
-    :param ti_df:
-    :param td_df:
-    :param grp_df:
-    :return:
-    """
-    db_file = os.path.join(DB_PATH, "task_sts.xls")
-    with pd.ExcelWriter(db_file) as writer:
-        ti_df.to_excel(writer, sheet_name='ti_df', index=False)
-        td_df.to_excel(writer, sheet_name='td_df', index=False)
-        grp_df.to_excel(writer, sheet_name='grp_df', index=False)
-    return
-
-
-def get_task_info_from_db():
+def restore_from_db():
     """
     从持久化存储获取任务信息
     :return:
     """
-    db_file = os.path.join(DB_PATH, "task_sts.xls")
-    if os.path.exists(db_file):
-        bak_file = os.path.join(DB_PATH,
-                                "task_sts_%s.xls" % datetime.datetime.now().strftime("%Y%m%d%H%M%S"))
-        logger.info("DB file exists, backup it to %s. " % bak_file)
-        os.system("cp %s %s" % (db_file, bak_file))
-    # 查询任务执行状态
-    ti_df = pd.read_excel(db_file, sheet_name='ti_df',
-                          dtype={
-                              "tid": str,
-                              "command": str,
-                              "log_path": str,
-                              "pre_tids": str,
-                              "group": str,
-                              "retry_cmd": str,
-                              'status': int,
-                              'retry_cnt': int},
-                          na_filter=False)
-    ti_df.loc[ti_df.status != TASK_STATUS_COMPLETE, "status"] = TASK_STATUS_WAITING
-    ti_df['retry_cnt'] = 0
-
-    td_df = pd.read_excel(db_file, sheet_name='td_df',
-                          dtype=str, na_filter=False)
-    grp_df = pd.read_excel(db_file, sheet_name='grp_df',
-                           dtype={
-                               "group": str,
-                               "processes_lmt": int},
-                           na_filter=False)
-    grp_df["processes"] = 0
-    return ti_df, td_df, grp_df
+    exec_sql("update `task_info` set retry_cnt = 0 ")
+    exec_sql("update `task_info` set `status` = %s where `status` != %s"
+             % (TASK_STATUS_WAITING, TASK_STATUS_COMPLETE))
+    exec_sql("update `group_info` set processes = 0")
+    return
 
 
-def gen_fathers(df, tids):
+def gen_fathers():
     """
 
-    :param df:
-    :param tids:
     :return:
     """
-    return df
+    return
 
 
-def gen_sons(df, tids):
+def gen_sons():
     """
 
-    :param df:
-    :param tids:
     :return:
     """
-    return df
+    return
 
 
 def exec_task(cmd="sleep 1", seconds=0):
@@ -240,33 +202,36 @@ def main_loop(t_date, mode):
     :return:
     """
     # 生成调度任务表
-    ti_df, td_df, grp_df = get_task_info(mode)
-    # ti_df: 任务信息表
-    # td_df: 任务依赖表
-    # grp_df: 分组信息表
-
+    init_task_info(mode)
     # 检查调度任务表
-    if not check_dag(td_df):
+    if not check_dag():
         raise ValueError("Task dependency is not a DAG! ")
-    # print(ti_df, "\n", td_df, "\n", grp_df, "\n", )
-
     # 主循环，循环执行满足执行条件的任务
     # 初始化进程池
     pool_ls = []
     pool = multiprocessing.Pool()
     while 1:
         # 遍历所有任务，根据其状态进行处理
+        ti_df = pd.read_sql_query("select * from task_info where status != %s" % TASK_STATUS_COMPLETE, db_engine)
+        # print(ti_df)
         for tid in ti_df.tid:
             t_info = ti_df[ti_df.tid == tid]
             status = t_info.status.iloc[0]
             # print(tid, status, status == TASK_STATUS_ERROR, type(status))
-            t_depend = td_df[td_df.tid == tid]
-            if status in (TASK_STATUS_WAITING, TASK_STATUS_RETRY) \
-                    and (len(t_depend) == len(t_depend[t_depend.pre_tid == ""])):
+            # t_depend = td_df[td_df.tid == tid]
+            t_depend = pd.read_sql_query("select td.tid, td.pre_tid, ti.`status` pre_sts from task_dependence td "
+                                         + "left join task_info ti on td.`pre_tid` = ti.`tid` "
+                                         + "where td.`tid` = '%s' " % tid,
+                                         db_engine)
+            # print(t_depend)
+            if status in [TASK_STATUS_WAITING, TASK_STATUS_RETRY] \
+                    and (len(t_depend[~t_depend.pre_sts.isin([None, TASK_STATUS_COMPLETE])]) == 0):
                 # 任务满足运行条件: 在等待且依赖任务完成
                 group = t_info.group.iloc[0]
-                processes = grp_df[grp_df.group == group].processes.iloc[0]
-                processes_lmt = grp_df[grp_df.group == group].processes_lmt.iloc[0]
+                grp_info = pd.read_sql_query("select * from group_info where `group` = '%s'" % group, db_engine)
+                processes = grp_info.processes.iloc[0]
+                processes_lmt = grp_info.processes_lmt.iloc[0]
+                # print(group, processes, processes_lmt)
                 if processes < processes_lmt:
                     # 判断是否满足并行数条件
                     cmd = make_cmd(tid, t_info.command.iloc[0], t_date, t_info.log_path.iloc[0])
@@ -276,9 +241,13 @@ def main_loop(t_date, mode):
                         tid,
                         pool.apply_async(func=exec_task, args=(cmd, seconds))
                     ))
-                    ti_df.loc[ti_df.tid == tid, "status"] = TASK_STATUS_RUNNING
-                    ti_df.loc[ti_df.tid == tid, "start_time"] = pd.Timestamp(datetime.datetime.now())
-                    grp_df.loc[grp_df.group == group, "processes"] = processes + 1
+                    # ti_df.loc[ti_df.tid == tid, "status"] = TASK_STATUS_RUNNING
+                    # ti_df.loc[ti_df.tid == tid, "start_time"] = pd.Timestamp(datetime.datetime.now())
+                    # grp_df.loc[grp_df.group == group, "processes"] = processes + 1
+                    exec_sql("update `task_info` set `status` = %s, `start_time` = '%s' where `tid` = '%s'"
+                             % (TASK_STATUS_RUNNING, datetime.datetime.now(), tid))
+                    exec_sql("update `group_info` set `processes` = `processes` + 1 where `group` = '%s'"
+                             % group)
                 else:
                     logger.debug("Task %s: processes reach the limit. " % tid)
                 # print(ti_df)
@@ -286,7 +255,7 @@ def main_loop(t_date, mode):
             elif status == TASK_STATUS_ERROR:
                 # 出错任务处理
                 retry_cnt = t_info["retry_cnt"].iloc[0] + 1
-                ti_df.loc[ti_df.tid == tid, "retry_cnt"] = retry_cnt
+                # ti_df.loc[ti_df.tid == tid, "retry_cnt"] = retry_cnt
                 if retry_cnt == MAX_RETRY_CNT:
                     # 重试到达限制报警
                     logger.error("Task %s: retries reach the limit. " % tid)
@@ -294,7 +263,9 @@ def main_loop(t_date, mode):
                     exec_task(cmd)
                 # 重置错误标识
                 logger.info("Task %s: reset status to TASK_STATUS_WAITING. " % tid)
-                ti_df.loc[ti_df.tid == tid, "status"] = TASK_STATUS_RETRY
+                # ti_df.loc[ti_df.tid == tid, "status"] = TASK_STATUS_RETRY
+                exec_sql("update `task_info` set `retry_cnt` = %s, `status` = %s where `tid` = '%s'"
+                         % (retry_cnt, TASK_STATUS_RETRY, tid))
 
         # 遍历进程池中的任务，查询完成情况，将完成的任务踢出进程池
         i = 0
@@ -309,23 +280,31 @@ def main_loop(t_date, mode):
                 if ret == 0:
                     # 任务返回0，完成
                     logger.info("Task %s: completed, ret is %s" % (tid, ret))
-                    ti_df.loc[ti_df.tid == tid, "status"] = TASK_STATUS_COMPLETE
-                    ti_df.loc[ti_df.tid == tid, "complete_time"] = pd.Timestamp(datetime.datetime.now())
-                    td_df.loc[td_df.pre_tid == tid, "pre_tid"] = ""
+                    # ti_df.loc[ti_df.tid == tid, "status"] = TASK_STATUS_COMPLETE
+                    # ti_df.loc[ti_df.tid == tid, "complete_time"] = pd.Timestamp(datetime.datetime.now())
+                    exec_sql("update `task_info` set `status` = %s, `complete_time` = '%s' where `tid` = '%s'"
+                             % (TASK_STATUS_COMPLETE, datetime.datetime.now(), tid))
+                    # td_df.loc[td_df.pre_tid == tid, "pre_tid"] = ""
+                    # exec_sql("update `task_dependence` set `pre_tid` = '' where `pre_tid` = '%s' "
+                    #          % tid)
                 else:
                     # 任务返回非0，失败
                     logger.error("Error: task %s return %s" % (tid, ret))
-                    ti_df.loc[ti_df.tid == tid, "status"] = TASK_STATUS_ERROR
+                    # ti_df.loc[ti_df.tid == tid, "status"] = TASK_STATUS_ERROR
+                    exec_sql("update `task_info` set `status` = %s where `tid` = '%s'"
+                             % (TASK_STATUS_ERROR, tid))
                 # print(ti_df)
-                group = ti_df.loc[ti_df.tid == tid, "group"].iloc[0]
-                grp_df.loc[grp_df.group == group, "processes"] -= 1
+                # group = ti_df.loc[ti_df.tid == tid, "group"].iloc[0]
+                # grp_df.loc[grp_df.group == group, "processes"] -= 1
+                exec_sql("update group_info, task_info set group_info.processes = group_info.processes - 1 "
+                         + "where group_info.`group` = task_info.`group` and task_info.tid = '%s'" % tid)
                 pool_ls.pop(i)
                 # print(grp_df)
 
         # print(ti_df)
 
         # 持久化调度任务表
-        update_db(ti_df, td_df, grp_df)
+        # update_db(ti_df, td_df, grp_df)
 
         # 如果所有任务全部完成，则跳出
         if len(ti_df[ti_df.status != TASK_STATUS_COMPLETE]) == 0:
