@@ -48,20 +48,24 @@ def init_from_cfg(t_date):
         "pre_tids": str,
         "group": str,
         "retry_cmd": str,
+        "comment": str,
+        "skipped": str,
     }, na_filter=False)
     for col in ti_df.columns:
         ti_df[col] = ti_df[col].str.strip()
+    ti_df.skipped.fillna(0, inplace=True)
+    ti_df.skipped = ti_df.skipped.astype(int)
 
     # 检查调度配置文件
     if len(ti_df.tid.drop_duplicates()) != len(ti_df):
         raise ValueError("Duplicate task ids. ")
 
     # status存放任务的执行状态
-    ti_df["status"] = TASK_STATUS_WAITING
+    ti_df["status"] = [TASK_STATUS_WAITING if v == 0 else TASK_STATUS_SKIPPED for v in ti_df.skipped]
     ti_df["retry_cnt"] = 0
     ti_df["start_time"] = None
     ti_df["complete_time"] = None
-
+    print(ti_df)
     # 生成依赖关系表
     df_ls = []
     for i in range(len(ti_df)):
@@ -106,8 +110,8 @@ def restore_from_db(t_date):
         td_tb_name = general_info_df.td_tb_name.iloc[0]
         gi_tb_name = general_info_df.gi_tb_name.iloc[0]
         exec_sql("update `%s` set retry_cnt = 0 " % ti_tb_name)
-        exec_sql("update `%s` set `status` = %s where `status` != %s"
-                 % (ti_tb_name, TASK_STATUS_WAITING, TASK_STATUS_COMPLETE))
+        exec_sql("update `%s` set `status` = %s where `status` not in (%s, %s)"
+                 % (ti_tb_name, TASK_STATUS_WAITING, TASK_STATUS_COMPLETE, TASK_STATUS_SKIPPED))
         exec_sql("update `%s` set processes = 0" % gi_tb_name)
     else:
         raise ValueError("No task status in database in date %s" % t_date)
@@ -221,8 +225,8 @@ def main_loop(t_date, mode):
     pool = multiprocessing.Pool()
     while 1:
         # 遍历所有任务，根据其状态进行处理
-        ti_df = pd.read_sql_query("select * from %s where `status` != %s"
-                                  % (ti_tb_name, TASK_STATUS_COMPLETE), db_engine)
+        ti_df = pd.read_sql_query("select * from %s where `status` not in (%s, %s)"
+                                  % (ti_tb_name, TASK_STATUS_COMPLETE, TASK_STATUS_SKIPPED), db_engine)
         # print(ti_df)
         for tid in ti_df.tid:
             t_info = ti_df[ti_df.tid == tid]
@@ -235,7 +239,7 @@ def main_loop(t_date, mode):
                                          db_engine)
             # print(t_depend)
             if status in [TASK_STATUS_WAITING, TASK_STATUS_RETRY] \
-                    and (len(t_depend[~t_depend.pre_sts.isin([None, TASK_STATUS_COMPLETE])]) == 0):
+                    and (len(t_depend[~t_depend.pre_sts.isin([None, TASK_STATUS_COMPLETE, TASK_STATUS_SKIPPED])]) == 0):
                 # 任务满足运行条件: 在等待且依赖任务完成
                 group = t_info.group.iloc[0]
                 grp_info = pd.read_sql_query("select * from %s where `group` = '%s'" % (gi_tb_name, group), db_engine)
@@ -317,7 +321,7 @@ def main_loop(t_date, mode):
         # update_db(ti_df, td_df, grp_df)
 
         # 如果所有任务全部完成，则跳出
-        if len(ti_df[ti_df.status != TASK_STATUS_COMPLETE]) == 0:
+        if len(ti_df) == 0:
             logger.info("All tasks completed. ")
             break
         time.sleep(LOOP_INVERVAL)

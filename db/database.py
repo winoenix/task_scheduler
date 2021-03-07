@@ -23,6 +23,7 @@ def init_tbs(t_date):
         `group` CHAR(20) NOT NULL,
         `retry_cmd` CHAR(255) NULL,
         `comment` VARCHAR(1024) NULL,
+        `skipped` INT NOT NULL,
         `status` INT NOT NULL,
         `retry_cnt` INT NOT NULL,
         `start_time` DATETIME NULL,
