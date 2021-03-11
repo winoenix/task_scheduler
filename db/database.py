@@ -4,7 +4,6 @@ from sqlalchemy import create_engine
 import pandas as pd
 import datetime
 
-conn = pymysql.connect(user=DB_USER, password=DB_PASSWORD, host=DB_IP, port=DB_PORT, database=DB_DATABASE)
 db_engine = create_engine("mysql+pymysql://%s:%s@%s:%s/%s?charset=utf8"
                           % (DB_USER, DB_PASSWORD, DB_IP, DB_PORT, DB_DATABASE))
 
@@ -16,7 +15,7 @@ def init_tbs(t_date):
     """ % ti_tb_name
     task_info_cre = """
     CREATE TABLE `%s` (
-        `tid` CHAR(50) NOT NULL,
+        `tid` CHAR(255) NOT NULL,
         `command` CHAR(255) NOT NULL,
         `log_path` CHAR(255) NOT NULL,
         `pre_tids` VARCHAR(4096) NOT NULL,
@@ -40,8 +39,8 @@ def init_tbs(t_date):
     """ % td_tb_name
     task_dependence_cre = """
     CREATE TABLE `%s` (
-        `tid` CHAR(50) NOT NULL,
-        `pre_tid` CHAR(50) NOT NULL,
+        `tid` CHAR(255) NOT NULL,
+        `pre_tid` CHAR(255) NOT NULL,
         PRIMARY KEY (`tid`, `pre_tid`)
     )
     """ % td_tb_name
@@ -96,11 +95,14 @@ def init_tbs(t_date):
 
 
 def exec_sql(sql):
+    conn = pymysql.connect(user=DB_USER, password=DB_PASSWORD, host=DB_IP, port=DB_PORT, database=DB_DATABASE)
     cur = conn.cursor()
     cur.execute(sql)
     cur.close()
     conn.commit()
+    conn.close()
 
 
 if __name__ == "__main__":
-    init_tbs()
+    # init_tbs(t_date)
+    pass
