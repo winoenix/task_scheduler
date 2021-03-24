@@ -16,7 +16,7 @@ def init_tbs(t_date):
     task_info_cre = """
     CREATE TABLE `%s` (
         `tid` CHAR(255) NOT NULL,
-        `command` CHAR(255) NOT NULL,
+        `command` VARCHAR(1024) NOT NULL,
         `log_path` CHAR(255) NOT NULL,
         `pre_tids` VARCHAR(4096) NOT NULL,
         `group` CHAR(20) NOT NULL,
