@@ -24,7 +24,7 @@ LOG_PATH = "./log/{t_date}"
 DB_PATH = "./db"        # 临时使用文件作为持久化工具
 
 CONFIG_PATH = "/home/ark/projects/findw_tasks/findw_tasks/conf/"
-TASK_INFO = os.path.join(CONFIG_PATH, "task_info.xls")
+TASK_INFO = os.path.join(CONFIG_PATH, "task_info.xlsx")
 # GRP_INFO = "./grp_info.xlsx"
 
 TASK_STATUS_WAITING = 0
