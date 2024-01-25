@@ -48,11 +48,13 @@ def init_from_cfg(t_date):
         "pre_tids": str,
         "group": str,
         "retry_cmd": str,
+        "retry_interval": str,
         "comment": str,
         "skipped": str,
     }, na_filter=False)
     for col in ti_df.columns:
         ti_df[col] = ti_df[col].str.strip()
+    ti_df.retry_interval = [None if v == "" else int(v) for v in ti_df.retry_interval]
     ti_df.skipped.fillna(0, inplace=True)
     ti_df.skipped = ti_df.skipped.astype(int)
 
@@ -174,7 +176,7 @@ def exec_task(cmd="sleep 1", seconds=0):
     return exec_ret
 
 
-def make_cmd(tid, cmd, t_date, log_path=LOG_PATH, no_log=False):
+def make_cmd(tid, cmd, t_date, log_path=LOG_PATH, no_log=False, retry_cnt=0):
     """
     制作执行语句
     :param tid:
@@ -182,6 +184,7 @@ def make_cmd(tid, cmd, t_date, log_path=LOG_PATH, no_log=False):
     :param t_date:
     :param log_path:
     :param no_log:
+    :param retry_cnt:
     :return:
     """
     t_date_str = t_date.strftime("%Y%m%d")
@@ -200,9 +203,15 @@ def make_cmd(tid, cmd, t_date, log_path=LOG_PATH, no_log=False):
     if no_log is False:
         log_file = os.path.join(log_path, "%s_%s.log" % (tid, t_date_str))
         if os.path.exists(log_file):
+            if retry_cnt == 1:
+                # 第一次重试，备份原始日志
+                os.system("cp %s %s" % (log_file, log_file + ".origin"))
             os.system("mv %s %s" % (log_file, log_file + ".bak"))
         err_file = os.path.join(log_path, "%s_%s.err.log" % (tid, t_date_str))
         if os.path.exists(err_file):
+            if retry_cnt == 1:
+                # 第一次重试，备份原始日志
+                os.system("cp %s %s" % (err_file, err_file + ".origin"))
             os.system("mv %s %s" % (err_file, err_file + ".bak"))
         cmd += " > %s 2> %s" % (log_file, err_file)
     return cmd
@@ -248,8 +257,18 @@ def main_loop(t_date, mode):
                 # print(group, processes, processes_lmt)
                 if processes < processes_lmt:
                     # 判断是否满足并行数条件
-                    cmd = make_cmd(tid, t_info.command.iloc[0], t_date, t_info.log_path.iloc[0])
-                    seconds = RETRY_INTERVAL if status == TASK_STATUS_RETRY else 0
+                    cmd = make_cmd(tid, t_info.command.iloc[0], t_date, t_info.log_path.iloc[0],
+                                   retry_cnt=t_info.retry_cnt.iloc[0])
+                    if status == TASK_STATUS_RETRY:
+                        # 重试任务
+                        if t_info.retry_interval.iloc[0] is None:
+                            # 重试间隔未设置，使用默认值
+                            seconds = RETRY_INTERVAL
+                        else:
+                            seconds = t_info.retry_interval.iloc[0]
+                    else:
+                        # 非重试任务
+                        seconds = 0
                     logger.info("Task %s: starting, command: %s" % (tid, cmd))
                     pool_ls.append((
                         tid,
@@ -272,11 +291,11 @@ def main_loop(t_date, mode):
                 # ti_df.loc[ti_df.tid == tid, "retry_cnt"] = retry_cnt
                 if retry_cnt == MAX_RETRY_CNT:
                     # 重试到达限制报警
-                    logger.error("Task %s: retries reach the limit. " % tid)
+                    logger.error("Task %s: retry %d, retries reach the limit. " % (tid, retry_cnt))
                     cmd = make_cmd(tid, t_info["retry_cmd"].iloc[0], t_date, no_log=True)
                     exec_task(cmd)
                 # 重置错误标识
-                logger.info("Task %s: reset status to TASK_STATUS_WAITING. " % tid)
+                logger.info("Task %s: retry %d, reset status to TASK_STATUS_WAITING. " % (tid, retry_cnt))
                 # ti_df.loc[ti_df.tid == tid, "status"] = TASK_STATUS_RETRY
                 exec_sql("update `%s` set `retry_cnt` = %s, `status` = %s where `tid` = '%s'"
                          % (ti_tb_name, retry_cnt, TASK_STATUS_RETRY, tid))

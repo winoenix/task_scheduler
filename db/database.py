@@ -25,6 +25,7 @@ def init_tbs(t_date):
         `skipped` INT NOT NULL,
         `status` INT NOT NULL,
         `retry_cnt` INT NOT NULL,
+        `retry_interval` INT NULL,
         `start_time` DATETIME NULL,
         `complete_time` DATETIME NULL,
         PRIMARY KEY (`tid`)
